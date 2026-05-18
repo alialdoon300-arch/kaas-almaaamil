@@ -11,11 +11,7 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install Bubblewrap
-        run: npm install -g @bubblewrap/cli
+      - uses: android-actions/setup-android@v3
       - name: Generate Keystore
         run: |
           keytool -genkeypair -keystore signing.jks -alias kaas \
@@ -26,18 +22,49 @@ jobs:
           echo "=== SHA256 ==="
           keytool -list -v -keystore signing.jks -alias kaas \
             -storepass "${{ secrets.KEYSTORE_PASSWORD }}" | grep SHA256
-      - name: Build TWA
+      - name: Create project files
         run: |
-          mkdir app && cd app
-          npx @bubblewrap/cli init \
-            --manifest "https://fork-continuation.replit.app/manifest.json" \
-            --directory .
-          npx @bubblewrap/cli build
+          python3 - << 'PYEOF'
+import os
+def w(p, c):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p,'w').write(c)
+w('settings.gradle', 'pluginManagement {\n    repositories { google(); mavenCentral(); gradlePluginPortal() }\n}\ndependencyResolutionManagement {\n    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)\n    repositories { google(); mavenCentral() }\n}\nrootProject.name = "KaasAlMaaamil"\ninclude ":app"\n')
+w('build.gradle', 'plugins {\n    id "com.android.application" version "8.2.2" apply false\n}\n')
+w('app/build.gradle', 'plugins { id "com.android.application" }\nandroid {\n    namespace "com.kaas.almaaamil"\n    compileSdk 34\n    defaultConfig {\n        applicationId "com.kaas.almaaamil"\n        minSdk 21\n        targetSdk 34\n        versionCode 1\n        versionName "1.0"\n    }\n    signingConfigs {\n        release {\n            storeFile file("../../signing.jks")\n            storePassword System.getenv("KEYSTORE_PASSWORD")\n            keyAlias "kaas"\n            keyPassword System.getenv("KEY_PASSWORD")\n        }\n    }\n    buildTypes {\n        release {\n            signingConfig signingConfigs.release\n            minifyEnabled false\n        }\n    }\n}\ndependencies {\n    implementation "com.google.androidbrowserhelper:androidbrowserhelper:2.5.0"\n}\n')
+w('app/src/main/AndroidManifest.xml', """<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <application android:label="kaas" android:supportsRtl="true">
+    <activity android:name="com.google.androidbrowserhelper.trusted.LauncherActivity" android:exported="true">
+      <meta-data android:name="android.support.customtabs.trusted.DEFAULT_URL" android:value="https://fork-continuation.replit.app/"/>
+      <meta-data android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR" android:resource="@color/colorPrimary"/>
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+      <intent-filter android:autoVerify="true">
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="https" android:host="fork-continuation.replit.app"/>
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>""")
+w('app/src/main/res/values/strings.xml', '<?xml version="1.0"?><resources><string name="app_name">kaas</string></resources>')
+w('app/src/main/res/values/colors.xml', '<?xml version="1.0"?><resources><color name="colorPrimary">#0a3d91</color></resources>')
+w('gradle/wrapper/gradle-wrapper.properties', 'distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.4-bin.zip\nzipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n')
+print("Done!")
+PYEOF
+      - name: Setup Gradle wrapper
+        run: gradle wrapper --gradle-version 8.4
+      - name: Build AAB
         env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew bundleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: kaas-aab
-          path: app/*.aab
+          path: app/build/outputs/bundle/release/app-release.aab
           retention-days: 30
